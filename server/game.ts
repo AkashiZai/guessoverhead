@@ -8,6 +8,7 @@ interface Room{
   code:string;host:string;players:Player[];cfg:Config;phase:Phase;cur:number;
   deadline:number;timer:NodeJS.Timeout|null;notice:string;revealKind:'won'|'gave'|null;done:number;
   turn:number;pausedMs:number;delTimer:NodeJS.Timeout|null;hostTimer:NodeJS.Timeout|null;
+  used:Set<string>;lastRound:Set<string>;
 }
 
 const ACTS:Act[]=['q+','q-','correct','wrong','give','skip','next'];
@@ -76,24 +77,75 @@ function advance(r:Room){
   startTimer(r,r.cfg.seconds*1000);
 }
 
-/** สุ่มตัวละครแบบกระจายหมวด (ไม่ให้หมวดที่มีตัวเยอะ เช่น นักฟุตบอล กินทุกการ์ด) และไม่ซ้ำกัน */
+/** สุ่มตัวละครแบบกระจายหมวดเท่าๆ กัน และจำประวัติข้ามรอบเพื่อไม่ให้ได้ตัวซ้ำเมื่อเริ่ม round ใหม่ */
 function pickChars(r:Room,n:number):PickedChar[]{
-  const groups=CATS.filter(c=>r.cfg.cats.includes(c.id)).map(c=>{
-    const all=c.chars.map(ch=>({...ch,catName:c.name}));
-    // ตัวที่ตรงระดับความยากมาก่อน ถ้าไม่พอค่อยเติมจากระดับอื่น
-    return [...shuffle(all.filter(x=>x.hard===r.cfg.hard)),...shuffle(all.filter(x=>x.hard!==r.cfg.hard))];
-  }).filter(g=>g.length);
-  const used=new Set<string>();
-  const out:PickedChar[]=[];
-  while(out.length<n){
-    const avail=groups.filter(g=>g.length);
-    if(!avail.length)break;
-    const g=avail[Math.floor(Math.random()*avail.length)];
-    const ch=g.shift()!;
-    const key=ch.name.toLowerCase();
-    if(used.has(key))continue;
-    used.add(key);out.push(ch);
+  const selectedCats=CATS.filter(c=>r.cfg.cats.includes(c.id));
+  if(!selectedCats.length)return [];
+
+  // เตรียม candidate pool สำหรับแต่ละหมวดที่เลือก
+  const catPools=new Map<string,PickedChar[]>();
+  for(const c of selectedCats){
+    let pool:PickedChar[]=c.chars.map(ch=>({...ch,catName:c.name}));
+    if(!r.cfg.hard){
+      const easy=pool.filter(x=>!x.hard);
+      if(easy.length>=2)pool=easy;
+    }
+    catPools.set(c.id,pool);
   }
+
+  const out:PickedChar[]=[];
+  const roundUsed=new Set<string>();
+
+  // จัดลำดับการแจกหมวดแบบกระจายเท่าๆ กัน (Round-Robin) ให้ทุกหมวดที่เลือกได้ถูกเล่นอย่างสมดุล
+  const catSequence:string[]=[];
+  const shuffledCatIds=shuffle([...r.cfg.cats]);
+  while(catSequence.length<n){
+    for(const cid of shuffledCatIds){
+      if(catSequence.length<n)catSequence.push(cid);
+    }
+  }
+
+  for(const targetCatId of catSequence){
+    const pool=catPools.get(targetCatId)||[];
+    // 1. หาตัวที่ยังไม่เคยเล่นในห้องนี้ และยังไม่ถูกเลือกในรอบนี้
+    let candidates=pool.filter(ch=>!r.used.has(ch.name.toLowerCase())&&!roundUsed.has(ch.name.toLowerCase()));
+
+    // 2. ถ้าหมวดนี้ใช้จนหมดแล้ว ให้รีไซเคิลหมวดนี้ใหม่ (แต่เว้นตัวจากรอบล่าสุดไว้ไม่ให้ซ้ำทันที)
+    if(!candidates.length){
+      candidates=pool.filter(ch=>!r.lastRound.has(ch.name.toLowerCase())&&!roundUsed.has(ch.name.toLowerCase()));
+      for(const ch of pool){
+        if(!r.lastRound.has(ch.name.toLowerCase())){
+          r.used.delete(ch.name.toLowerCase());
+        }
+      }
+    }
+
+    // 3. ถ้ายังไม่มี (เช่น ตัวในหมวดน้อยกว่าจำนวนผู้เล่น) ให้ยอมเอาตัวใดก็ได้ที่ไม่ซ้ำในรอบนี้
+    if(!candidates.length){
+      candidates=pool.filter(ch=>!roundUsed.has(ch.name.toLowerCase()));
+    }
+
+    // 4. ถ้าในหมวดนี้หมดจริงๆ ให้ดึงจากหมวดอื่นที่เลือกไว้
+    if(!candidates.length){
+      for(const [otherId,otherPool] of catPools){
+        if(otherId===targetCatId)continue;
+        const otherCand=otherPool.filter(ch=>!roundUsed.has(ch.name.toLowerCase())&&!r.used.has(ch.name.toLowerCase()));
+        if(otherCand.length){
+          candidates=otherCand;
+          break;
+        }
+      }
+    }
+
+    if(candidates.length){
+      const picked=candidates[Math.floor(Math.random()*candidates.length)];
+      out.push(picked);
+      roundUsed.add(picked.name.toLowerCase());
+      r.used.add(picked.name.toLowerCase());
+    }
+  }
+
+  r.lastRound=roundUsed;
   return shuffle(out);
 }
 
@@ -225,7 +277,7 @@ function handle(ws:WebSocket,m:ClientMsg){
     if(prev&&prev.room!==r)leaveRoom(ws,true);
 
     if(!r){
-      r={code:newCode(),host:'',players:[],cfg:defaultCfg(),phase:'lobby',cur:0,deadline:0,timer:null,notice:'',revealKind:null,done:0,turn:0,pausedMs:0,delTimer:null,hostTimer:null};
+      r={code:newCode(),host:'',players:[],cfg:defaultCfg(),phase:'lobby',cur:0,deadline:0,timer:null,notice:'',revealKind:null,done:0,turn:0,pausedMs:0,delTimer:null,hostTimer:null,used:new Set(),lastRound:new Set()};
       rooms.set(r.code,r);
     }
 
