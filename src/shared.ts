@@ -9,6 +9,8 @@ export interface View{
   cats:{id:string;name:string;count:number}[];
   players:PlayerView[];cur:string|null;remainingMs:number;
   notice:string;revealKind:'won'|'gave'|null;
+  /** เลขลำดับตา เพิ่มทุกครั้งที่เปลี่ยนตา/เปลี่ยนสถานะ ใช้กันกดปุ่มค้างจากตาก่อนหน้า */
+  turn:number;
 }
 export type Act='q+'|'q-'|'correct'|'wrong'|'give'|'skip'|'next';
 export type ClientMsg=
@@ -17,7 +19,7 @@ export type ClientMsg=
   |{t:'leave'}
   |{t:'cfg';cfg:Config}
   |{t:'start'}
-  |{t:'act';a:Act}
+  |{t:'act';a:Act;turn:number}
   |{t:'again'}
   |{t:'lobby'};
 export type ServerMsg={t:'view';view:View}|{t:'error';msg:string}|{t:'left'};

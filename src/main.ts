@@ -17,6 +17,7 @@ let toastMsg='';
 let toastTimer=0;
 let deadline=0,tick=0;
 let reconnectTimer=0;
+let rejoining=false;
 const pending:ClientMsg[]=[];
 
 function showToast(msg:string){
@@ -50,8 +51,11 @@ function initWs(){
     isConnecting=false;
     isConnected=true;
     err='';
+    // เชื่อมต่อใหม่ทุกครั้ง (รวมถึงตอนเน็ตหลุดกลางเกม) ให้กลับเข้าห้องเดิมด้วย token เดิม
     const s=loadSession();
-    if(s&&s.code&&!view){
+    const userJoining=pending.some(p=>p.t==='create'||p.t==='join');
+    if(s&&s.code&&!userJoining){
+      rejoining=true;
       pending.unshift({t:'join',code:s.code,name:s.name,token:s.token});
     }
     flush();
@@ -63,16 +67,21 @@ function initWs(){
     try{m=JSON.parse(e.data)}catch{return}
     if(m.t==='error'){
       err=m.msg;
-      if(!view){
+      if(rejoining||!view){
+        // กลับเข้าห้องเดิมไม่ได้ (เช่น เซิร์ฟเวอร์รีสตาร์ท ห้องหายไปแล้ว) -> กลับหน้าแรก
+        rejoining=false;
+        view=null;
         const s=loadSession();
         if(s)saveSession({...s,code:''});
       }
     }else if(m.t==='left'){
+      rejoining=false;
       view=null;
       const s=loadSession();
       if(s)saveSession({...s,code:''});
       err='';
     }else if(m.t==='view'){
+      rejoining=false;
       err='';
       view=m.view;
       const s=loadSession();
@@ -114,6 +123,10 @@ function flush(){
 }
 
 function send(m:ClientMsg){
+  // กดสร้าง/เข้าห้องซ้ำตอนยังไม่ต่อเน็ต ให้เหลือแค่คำสั่งล่าสุด (กันสร้างหลายห้อง)
+  if(m.t==='create'||m.t==='join'){
+    for(let i=pending.length-1;i>=0;i--)if(pending[i].t==='create'||pending[i].t==='join')pending.splice(i,1);
+  }
   pending.push(m);
   if(!ws||ws.readyState!==WebSocket.OPEN){
     initWs();
@@ -122,7 +135,14 @@ function send(m:ClientMsg){
   }
 }
 
-const act=(a:Act)=>send({t:'act',a});
+// ส่งเลขตาไปด้วย เซิร์ฟเวอร์จะไม่รับถ้ากดค้างมาจากตาก่อนหน้า
+const act=(a:Act)=>{if(view)send({t:'act',a,turn:view.turn})};
+
+// มือถือกลับมาเปิดจอ/สลับแอปกลับมา -> เชื่อมต่อใหม่ทันทีไม่ต้องรอ
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&(!ws||ws.readyState===WebSocket.CLOSED))initWs();
+});
+window.addEventListener('online',()=>initWs());
 
 function startTick(){
   clearInterval(tick);
@@ -177,6 +197,17 @@ function board(v:View){
 }
 
 function render(){
+  // เก็บช่องที่กำลังพิมพ์อยู่ไว้ เพื่อไม่ให้หลุดโฟกัส/ค่าหายตอนมีอัปเดตจากเซิร์ฟเวอร์ (เช่น เพื่อนเข้าห้อง)
+  const active=document.activeElement as HTMLInputElement|null;
+  const keep=active&&active.id&&active.tagName==='INPUT'?{id:active.id,value:active.value}:null;
+  renderView();
+  if(keep){
+    const el=document.getElementById(keep.id) as HTMLInputElement|null;
+    if(el&&el!==active&&!el.disabled){el.value=keep.value;el.focus()}
+  }
+}
+
+function renderView(){
   const v=view;
   const off=!isConnected&&v?'<div class="warn"><span>ขาดการเชื่อมต่อกับเซิร์ฟเวอร์ กำลังเชื่อมต่อใหม่อัตโนมัติ…</span></div>':'';
 
@@ -278,8 +309,8 @@ function render(){
         <div style="height:16px"></div>
         <h2>ระดับความยาก</h2>
         <div class="chips">
-          <label><input type="radio" name="lv" value="easy" ${v.cfg.hard?'':'checked'} ${isHost?'':'disabled'}><span>ง่าย (เฉพาะตัวดัง ยอดฮิต)</span></label>
-          <label><input type="radio" name="lv" value="hard" ${v.cfg.hard?'checked':''} ${isHost?'':'disabled'}><span>รวมทั้งหมด (มีตัวลึก/ตำนาน)</span></label>
+          <label><input type="radio" name="lv" value="easy" ${v.cfg.hard?'':'checked'} ${isHost?'':'disabled'}><span>ง่าย (ตัวดังๆ)</span></label>
+          <label><input type="radio" name="lv" value="hard" ${v.cfg.hard?'checked':''} ${isHost?'':'disabled'}><span>ยาก (ตัวที่คนไม่ค่อยรู้จัก)</span></label>
         </div>
 
         <div style="height:16px"></div>
@@ -391,7 +422,8 @@ function render(){
           <button class="bad" data-act="wrong">ทายผิด (เสียตา)</button>
         </div>
         ${board(v)}
-        ${footerBtns}`;
+        ${footerBtns}
+        ${err?`<p class="err center">${esc(err)}</p>`:''}`;
     }
     const t=document.getElementById('tl');
     if(t)t.textContent=`${Math.ceil(Math.max(0,deadline-Date.now())/1000)} วินาที`;
@@ -463,7 +495,8 @@ function render(){
       ?'<div class="actions"><button class="primary" data-act="again">เล่นอีกครั้ง (หมวดเดิม)</button><button data-act="lobby">ตั้งค่าหมวดใหม่ / ล็อบบี้</button></div>'
       :'<div class="card-subtle center muted">รอเจ้าของห้องกดเริ่มรอบใหม่ หรือกดออกจากห้องด้านล่างได้เลย</div>'}
     <div style="height:12px"></div>
-    <button class="bad" data-act="leave">ออกจากห้อง (กลับหน้าแรก)</button>`;
+    <button class="bad" data-act="leave">ออกจากห้อง (กลับหน้าแรก)</button>
+    ${err?`<p class="err center">${esc(err)}</p>`:''}`;
 }
 
 /* ---------- เหตุการณ์ ---------- */
@@ -509,6 +542,8 @@ function handleLeave(){
   clearInterval(tick);
   view=null;
   err='';
+  rejoining=false;
+  pending.length=0;
   const s=loadSession();
   if(s)saveSession({...s,code:''});
   if(location.search)history.replaceState(null,'',location.pathname);

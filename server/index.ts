@@ -1,6 +1,7 @@
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
-import {extname,join,normalize} from 'node:path';
+import {dirname,extname,join,normalize,sep} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {setupGameServer} from './game';
 
 const mime:Record<string,string>={
@@ -19,10 +20,21 @@ const mime:Record<string,string>={
   '.ttf':'font/ttf'
 };
 
-const dist=join(import.meta.dirname,'..','dist');
+// ใช้ fileURLToPath แทน import.meta.dirname เพื่อให้รันได้บน Node 20 ทุกรุ่นย่อย
+const dist=join(dirname(fileURLToPath(import.meta.url)),'..','dist');
+
+async function sendIndex(res:import('node:http').ServerResponse){
+  try{
+    const buf=await readFile(join(dist,'index.html'));
+    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-cache'}).end(buf);
+  }catch{
+    res.writeHead(404,{'content-type':'text/plain; charset=utf-8'}).end('ไม่พบไฟล์ (กรุณารัน npm run build ก่อน หรือใช้ npm run dev)');
+  }
+}
 
 const http=createServer(async(req,res)=>{
-  const rawPath=(req.url??'/').split('?')[0];
+  let rawPath='/';
+  try{rawPath=decodeURIComponent((req.url??'/').split('?')[0])}catch{}
 
   // Health check endpoint for Render
   if(rawPath==='/health'||rawPath==='/ping'){
@@ -30,19 +42,18 @@ const http=createServer(async(req,res)=>{
     return;
   }
 
-  const path=normalize(rawPath).replace(/^(\.\.[/\\])+/,'');
+  const file=join(dist,normalize(rawPath));
+  // กันการอ่านไฟล์นอกโฟลเดอร์ dist
+  if(rawPath==='/'||!file.startsWith(dist+sep))return sendIndex(res);
   try{
-    const file=path==='/'||path==='\\'?'index.html':path;
-    const buf=await readFile(join(dist,file));
-    res.writeHead(200,{'content-type':mime[extname(file)]??'application/octet-stream'}).end(buf);
+    const buf=await readFile(file);
+    const isAsset=rawPath.startsWith('/assets/');
+    res.writeHead(200,{
+      'content-type':mime[extname(file)]??'application/octet-stream',
+      'cache-control':isAsset?'public, max-age=31536000, immutable':'no-cache',
+    }).end(buf);
   }catch{
-    try{
-      // SPA fallback
-      const buf=await readFile(join(dist,'index.html'));
-      res.writeHead(200,{'content-type':'text/html; charset=utf-8'}).end(buf);
-    }catch{
-      res.writeHead(404).end('ไม่พบไฟล์ (กรุณารัน npm run build ก่อน หรือใช้ npm run dev)');
-    }
+    await sendIndex(res); // SPA fallback
   }
 });
 
