@@ -86,10 +86,9 @@ function pickChars(r:Room,n:number):PickedChar[]{
   const catPools=new Map<string,PickedChar[]>();
   for(const c of selectedCats){
     let pool:PickedChar[]=c.chars.map(ch=>({...ch,catName:c.name}));
-    if(!r.cfg.hard){
-      const easy=pool.filter(x=>!x.hard);
-      if(easy.length>=2)pool=easy;
-    }
+    // ง่าย = เฉพาะตัวดัง, ยาก = เฉพาะตัวลึก/ตำนาน (ถ้าหมวดนั้นมีตัวพอ)
+    const filtered=pool.filter(x=>x.hard===r.cfg.hard);
+    if(filtered.length>=3)pool=filtered;
     catPools.set(c.id,pool);
   }
 

@@ -310,7 +310,7 @@ function renderView(){
         <h2>ระดับความยาก</h2>
         <div class="chips">
           <label><input type="radio" name="lv" value="easy" ${v.cfg.hard?'':'checked'} ${isHost?'':'disabled'}><span>ง่าย (ตัวดังๆ)</span></label>
-          <label><input type="radio" name="lv" value="hard" ${v.cfg.hard?'checked':''} ${isHost?'':'disabled'}><span>ยาก (ตัวที่คนไม่ค่อยรู้จัก)</span></label>
+          <label><input type="radio" name="lv" value="hard" ${v.cfg.hard?'checked':''} ${isHost?'':'disabled'}><span>ยาก (ตำนาน / ตัวลึก ต้องตามวงการ)</span></label>
         </div>
 
         <div style="height:16px"></div>
