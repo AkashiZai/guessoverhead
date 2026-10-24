@@ -148,7 +148,7 @@ const topbarHtml=(code?:string)=>`<header class="topbar">
     <span>ตัวบนหัว</span>
   </div>
   <div class="topbar-right">
-    ${code?`<span class="room-pill">#${esc(code)}</span>`:''}
+    ${code?`<span class="room-pill">#${esc(code)}</span><button type="button" class="top-leave" data-act="leave">ออกห้อง</button>`:''}
     ${connBadgeHtml()}
   </div>
 </header>`;
@@ -225,6 +225,7 @@ function render(){
     return;
   }
 
+  const me=v.players.find(p=>p.id===v.me);
   const cur=v.players.find(p=>p.id===v.cur);
   const isHost=v.host===v.me;
 
@@ -292,8 +293,8 @@ function render(){
       ${isHost
         ?`<button class="primary" data-act="start" ${v.players.length<2?'disabled':''}>เริ่มเกมเลย (${v.players.length} คน)</button>`
         :'<div class="card-subtle center muted">รอเจ้าของห้องกดเริ่มเกม…</div>'}
-      <div style="height:8px"></div>
-      <button class="subtle" data-act="leave">ออกจากห้อง</button>
+      <div style="height:10px"></div>
+      <button class="bad" data-act="leave">ออกจากห้อง</button>
       ${err?`<p class="err center">${esc(err)}</p>`:''}`;
     return;
   }
@@ -301,6 +302,16 @@ function render(){
   if(v.phase==='turn'&&cur){
     const mine=cur.id===v.me;
     const head=v.notice?`<div class="notice">${esc(v.notice)}</div>`:'';
+    const myDoneBanner=me&&me.status!=='play'
+      ?`<div class="card-subtle" style="border-color:var(--yes-border);background:var(--yes-soft)">
+          <b>คุณจบตารอบนี้แล้ว (${me.status==='won'?'ทายถูก ✓':'ยอมแพ้'})</b> · ตัวละครของคุณคือ <b>${esc(me.ch?.name??'')}</b>
+          <div class="muted" style="font-size:13.5px">ตอนนี้ช่วยตอบคำถามให้เพื่อนที่ยังเล่นอยู่ หรือกดออกห้องได้ทุกเมื่อ</div>
+        </div>`
+      :'';
+    const footerBtns=isHost
+      ?`<div class="actions" style="margin-top:16px"><button class="subtle" data-act="lobby">กลับหน้าล็อบบี้</button><button class="bad" data-act="leave">ออกจากห้อง</button></div>`
+      :`<div style="margin-top:16px"><button class="bad" data-act="leave">ออกจากห้อง</button></div>`;
+
     if(mine){
       app.innerHTML=`
         ${topbarHtml(v.code)}
@@ -335,11 +346,12 @@ function render(){
           <button class="bad" data-act="give">ยอมแพ้ (ดูเฉลย)</button>
         </div>
         ${board(v)}
+        ${footerBtns}
         ${err?`<p class="err center">${esc(err)}</p>`:''}`;
     }else{
       app.innerHTML=`
         ${topbarHtml(v.code)}
-        ${off}${head}
+        ${off}${head}${myDoneBanner}
         <div class="warn">
           <span>ถึงตาของ <b>${esc(cur.name)}</b> (เจ้าตัวไม่เห็นหน้านี้)</span>
           <span class="tag">ช่วยกันตอบ ใช่ / ไม่ใช่</span>
@@ -372,13 +384,14 @@ function render(){
         <div class="counter">
           <button data-act="q-">−1</button>
           <b><span>${cur.q}</span><small>คำถามที่ ${esc(cur.name)} ถามไปแล้ว</small></b>
-          <button data-act="q+">+1</button>
+          <button class="primary" data-act="q+">+1</button>
         </div>
         <div class="actions">
           <button class="ok" data-act="correct">ทายถูก! (เฉลย)</button>
           <button class="bad" data-act="wrong">ทายผิด (เสียตา)</button>
         </div>
-        ${board(v)}`;
+        ${board(v)}
+        ${footerBtns}`;
     }
     const t=document.getElementById('tl');
     if(t)t.textContent=`${Math.ceil(Math.max(0,deadline-Date.now())/1000)} วินาที`;
@@ -388,6 +401,7 @@ function render(){
   if(v.phase==='reveal'&&cur){
     const mine=cur.id===v.me;
     const isWon=v.revealKind==='won';
+    const hasMorePlaying=v.players.some(p=>p.status==='play');
     app.innerHTML=`
       ${topbarHtml(v.code)}
       ${off}
@@ -408,8 +422,11 @@ function render(){
           </p>
         </div>
       </div>
-      <button class="primary" data-act="next">ไปตาถัดไป</button>
-      ${board(v)}`;
+      <button class="primary" data-act="next">${hasMorePlaying?'ไปตาถัดไป':'ดูสรุปอันดับจบเกม 🏆'}</button>
+      ${board(v)}
+      <div style="margin-top:16px">
+        <button class="bad" data-act="leave">ออกจากห้อง</button>
+      </div>`;
     return;
   }
 
@@ -443,10 +460,10 @@ function render(){
       </table>
     </div>
     ${isHost
-      ?'<div class="actions"><button class="primary" data-act="again">เล่นอีกครั้ง (หมวดเดิม)</button><button data-act="lobby">ตั้งค่าหมวดใหม่</button></div>'
-      :'<div class="card-subtle center muted">รอเจ้าของห้องกดเริ่มรอบใหม่หรือกลับล็อบบี้…</div>'}
-    <div style="height:10px"></div>
-    <button class="subtle" data-act="leave">ออกจากห้อง</button>`;
+      ?'<div class="actions"><button class="primary" data-act="again">เล่นอีกครั้ง (หมวดเดิม)</button><button data-act="lobby">ตั้งค่าหมวดใหม่ / ล็อบบี้</button></div>'
+      :'<div class="card-subtle center muted">รอเจ้าของห้องกดเริ่มรอบใหม่ หรือกดออกจากห้องด้านล่างได้เลย</div>'}
+    <div style="height:12px"></div>
+    <button class="bad" data-act="leave">ออกจากห้อง (กลับหน้าแรก)</button>`;
 }
 
 /* ---------- เหตุการณ์ ---------- */
@@ -486,6 +503,19 @@ function handleJoin(){
   const t=token();
   saveSession({token:t,name,code});
   send({t:'join',code,name,token:t});
+}
+
+function handleLeave(){
+  clearInterval(tick);
+  view=null;
+  err='';
+  const s=loadSession();
+  if(s)saveSession({...s,code:''});
+  if(location.search)history.replaceState(null,'',location.pathname);
+  if(ws?.readyState===WebSocket.OPEN){
+    ws.send(JSON.stringify({t:'leave'}));
+  }
+  render();
 }
 
 app.addEventListener('keydown',e=>{
@@ -532,7 +562,7 @@ app.addEventListener('click',e=>{
       }
       break;
     }
-    case 'leave':send({t:'leave'});break;
+    case 'leave':handleLeave();break;
     case 'start':send({t:'start'});break;
     case 'again':send({t:'again'});break;
     case 'lobby':send({t:'lobby'});break;

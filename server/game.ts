@@ -87,18 +87,45 @@ function act(r:Room,pid:string,a:Act){
   broadcast(r);
 }
 
-function leaveRoom(ws:WebSocket){
+function leaveRoom(ws:WebSocket,explicit=false){
   const c=conns.get(ws);
   if(!c)return;
   conns.delete(ws);
   const {room:r,pid}=c;
-  const p=r.players.find(x=>x.id===pid);
-  if(!p)return;
+  const idx=r.players.findIndex(x=>x.id===pid);
+  if(idx===-1)return;
+  const p=r.players[idx];
   p.ws=null;
-  if(r.phase==='lobby'){
-    r.players=r.players.filter(x=>x!==p);
-    if(r.host===pid)r.host=r.players[0]?.id??'';
+
+  if(explicit||r.phase==='lobby'){
+    const wasCur=idx===r.cur;
+    r.players.splice(idx,1);
+    if(r.host===pid){
+      r.host=r.players.find(x=>x.ws)?.id??r.players[0]?.id??'';
+    }
+    if(!r.players.length){
+      clearTimer(r);
+      rooms.delete(r.code);
+      return;
+    }
+    if(r.phase==='turn'||r.phase==='reveal'){
+      if(!playing(r).length){
+        clearTimer(r);
+        r.phase='final';
+        r.revealKind=null;
+      }else if(wasCur){
+        r.cur=(idx-1+r.players.length)%r.players.length;
+        r.notice=`${p.name} ออกจากห้อง เปลี่ยนตาถัดไป`;
+        advance(r);
+      }else if(idx<r.cur){
+        r.cur--;
+      }
+    }
+  }else if(r.host===pid&&r.phase==='final'){
+    const nextHost=r.players.find(x=>x.ws);
+    if(nextHost)r.host=nextHost.id;
   }
+
   if(!r.players.some(x=>x.ws)){
     clearTimer(r);
     setTimeout(()=>{if(!r.players.some(x=>x.ws))rooms.delete(r.code)},5*60*1000);
@@ -116,7 +143,7 @@ export function setupGameServer(server:any){
       const err=(msg:string)=>send(ws,{t:'error',msg});
 
       if(m.t==='create'||m.t==='join'){
-        leaveRoom(ws);
+        leaveRoom(ws,true);
 
         const name=String(m.name??'').trim().slice(0,20);
         if(!name)return err('ใส่ชื่อของคุณก่อน');
@@ -157,7 +184,7 @@ export function setupGameServer(server:any){
       }
 
       if(m.t==='leave'){
-        leaveRoom(ws);
+        leaveRoom(ws,true);
         send(ws,{t:'left'});
         return;
       }
@@ -187,15 +214,16 @@ export function setupGameServer(server:any){
           if(e)return err(e);
           break}
         case 'lobby':
-          if(!isHost||r.phase!=='final')return;
-          r.phase='lobby';r.notice='';r.players.forEach(p=>{p.ch=null});
+          if(!isHost)return;
+          clearTimer(r);
+          r.phase='lobby';r.notice='';r.revealKind=null;r.players.forEach(p=>{p.ch=null;p.status='play';p.q=0;p.wrong=0;p.fin=0});
           break;
       }
       broadcast(r);
     });
 
     ws.on('close',()=>{
-      leaveRoom(ws);
+      leaveRoom(ws,false);
     });
   });
 

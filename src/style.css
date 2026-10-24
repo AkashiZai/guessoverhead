@@ -102,6 +102,22 @@ main {
   border-radius: 999px;
 }
 
+button.top-leave {
+  width: auto;
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--no-soft);
+  color: var(--no);
+  border: 1px solid var(--no-border);
+  box-shadow: none;
+}
+button.top-leave:hover {
+  background: #f5d8d5;
+}
+
 .conn-status {
   font-size: 13px;
   color: var(--muted);
