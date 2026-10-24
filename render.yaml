@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: head-guess
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
